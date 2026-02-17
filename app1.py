@@ -8,6 +8,16 @@ import matplotlib.pyplot as plt
 import datetime
 import os
 import warnings
+
+from plotly_dashboard import (
+    load_and_preprocess_data,
+    get_kpi_scorecards,
+    get_location_chart,
+    get_quantity_by_product_chart,
+    get_price_vs_quantity_scatter,
+    get_cumulative_sales_chart
+)
+
 import time # Import the time module
 warnings.filterwarnings('ignore')
 from sqlalchemy import create_engine
@@ -56,12 +66,34 @@ except ImportError:
 
 # ==================== DATABASE SETUP ====================
 
-DATABASE_URL = "sqlite:///./msme_data.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# DATABASE_URL = "sqlite:///./msme_data.db"
+# engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Base = declarative_base()
+# Base = declarative_base()
 
+# class MSMEProfile(Base):
+#     __tablename__ = "msme_profiles"
+
+#     id = Column(Integer, primary_key=True, index=True)
+#     mobile_number = Column(String(15), unique=True, index=True)
+#     full_name = Column(String(100))
+#     email = Column(String(100))
+#     role = Column(String(50))
+#     company_name = Column(String(200))
+#     business_type = Column(String(50))
+#     state = Column(String(50))
+#     city = Column(String(100))
+#     years_operation = Column(Integer)
+#     monthly_revenue_range = Column(String(50))
+#     verification_status = Column(String(20), default="PENDING")
+#     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+#     consent_given = Column(Boolean, default=False)
+#     organisation_type = Column(String(100))
+#     major_activity = Column(String(200))
+#     enterprise_type = Column(String(50))
+
+# Base.metadata.create_all(bind=engine)
 class MSMEProfile(Base):
     __tablename__ = "msme_profiles"
 
@@ -83,7 +115,9 @@ class MSMEProfile(Base):
     major_activity = Column(String(200))
     enterprise_type = Column(String(50))
 
+
 Base.metadata.create_all(bind=engine)
+
 
 # ==================== DATABASE OPERATIONS ====================
 
@@ -480,57 +514,48 @@ def generate_dashboard_data(user_data, df):
         traceback.print_exc()
         return ("N/A", "N/A", "N/A", "N/A", None, None, None, None, f"Error: {str(e)}")
 
+
 def generate_pdf_report(user_data, df, dashboard_figs=None):
-    """Generate PDF report"""
     try:
         from matplotlib.backends.backend_pdf import PdfPages
 
         df = calculate_scores(df)
         forecast_results = forecast_sales(df)
 
-        pdf_path = f"/tmp/{user_data.get('company_name', 'Company')}_report.pdf".replace(" ", "_")
+        company = user_data.get("company_name", "MSME_Report").strip()
+
+        if not company:
+            company = "MSME_Report"
+
+        filename = f"{company.replace(' ', '_')}.pdf"
+
+        # ✅ Create reports folder
+        reports_folder = os.path.join(os.getcwd(), "reports")
+
+        if not os.path.exists(reports_folder):
+            os.makedirs(reports_folder)
+
+        # ✅ Correct file path
+        pdf_path = os.path.join(reports_folder, filename)
+
+        print("FINAL PDF PATH:", pdf_path)
 
         with PdfPages(pdf_path) as pdf:
-            # Cover page
-            fig_cover = plt.figure(figsize=(8, 6))
-            plt.axis('off')
-            plt.text(0.5, 0.6, "MSME Analytics Report", fontsize=24, ha='center', weight='bold')
-            plt.text(0.5, 0.5, f"{user_data.get('company_name', 'Your Company')}", fontsize=16, ha='center')
-            plt.text(0.5, 0.4, f"{datetime.datetime.now().strftime('%d %B %Y')}", fontsize=12, ha='center')
-            pdf.savefig(fig_cover)
-            plt.close(fig_cover)
+            fig = plt.figure()
+            plt.text(0.5, 0.5, "MSME Report", ha="center")
+            pdf.savefig(fig)
+            plt.close(fig)
 
-            # Summary page
-            fig_summary = plt.figure(figsize=(8, 6))
-            plt.axis('off')
-            summary_text = f"""Executive Summary
-
-Total Sales: ₹{df['Monthly_Sales_INR'].sum():,.0f}
-Average Health Score: {df['MSME_Health_Score'].mean():.1f}%
-Average Risk Score: {df['Financial_Risk_Score'].mean():.2f}
-
-6-Month Forecast: ₹{forecast_results['6_month']['forecast']:,.0f}
-12-Month Forecast: ₹{forecast_results['12_month']['forecast']:,.0f}
-
-Top Product: {df.nlargest(1, 'Monthly_Sales_INR')['SKU_Name'].values[0]}
-"""
-            plt.text(0.1, 0.5, summary_text, fontsize=12, family='monospace')
-            pdf.savefig(fig_summary)
-            plt.close(fig_summary)
-
-            # Add dashboard charts
-            if dashboard_figs:
-                for fig in dashboard_figs:
-                    if fig is not None:
-                        pdf.savefig(fig)
-
-        if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
-            return None, "PDF generation failed"
-
-        return pdf_path, None
+        if os.path.exists(pdf_path):
+            print("PDF successfully created")
+            return pdf_path, None
+        else:
+            return None, "PDF not created"
 
     except Exception as e:
-        return None, f"PDF Error: {str(e)}"
+        print("PDF ERROR:", str(e))
+        return None, str(e)
+
 
 # ==================== MOCK DATA ====================
 
@@ -563,6 +588,38 @@ def _fetch_msme_data(msme_number):
         )
     else:
         return "", "", "", "", "", "", "❌ MSME Data Not Found. Please check the number."
+    
+def update_plotly_dashboard(product, location, payment, date_range):
+
+    try:
+        df = pd.read_sql_table("demo_rawdata1", con=create_engine(DATABASE_URL))
+        df = load_and_preprocess_data(df)
+
+        if product:
+            df = df[df["Product_Name"] == product]
+
+        if location:
+            df = df[df["Store_Location"] == location]
+
+        if payment:
+            df = df[df["Payment_Mode"] == payment]
+
+        if date_range:
+            start, end = date_range
+            df = df[(df["Date"] >= start) & (df["Date"] <= end)]
+
+        return (
+            get_kpi_scorecards(df),
+            get_location_chart(df),
+            get_quantity_by_product_chart(df),
+            get_price_vs_quantity_scatter(df),
+            get_cumulative_sales_chart(df)
+        )
+
+    except Exception as e:
+        print(e)
+        return None, None, None, None, None
+
 
 # ==================== GRADIO UI ====================
 
@@ -580,7 +637,7 @@ with gr.Blocks(
     css="""
    
 .gradio-container {
-    background-image: url("file=retail_bg.png") !important;
+    background-image: url("https://images.unsplash.com/photo-1519389950473-47ba0277781c") !important;
     background-size: cover !important;
     background-position: center !important;
     background-repeat: no-repeat !important;
@@ -1263,22 +1320,28 @@ with gr.Blocks(
                     analyze_btn = gr.Button("🚀 Analyze Data", variant="primary")
 
                 gr.Markdown("---")
-
                 insights_output = gr.Markdown()
 
-                pdf_output = gr.File(label="Download PDF Report")
+                pdf_output = gr.File(label="Download PDF Report", visible=False)
 
-                view_dashboard_btn = gr.Button(
-                    "📊 View Dashboard",
-                    visible=False,
-                    variant="primary"
-                )
+
+        view_dashboard_btn = gr.Button(
+                        "📊 View Dashboard",
+                        visible=False,
+                        variant="primary"
+                    )
 
     # Step 6: Dashboard
     
     with gr.Column(visible=False, elem_classes="step-slide") as step6_col:
 
         gr.Markdown("## 📊 Business Performance Dashboard")
+        with gr.Row():
+            product_filter = gr.Dropdown(label="Product Name", choices=[], interactive=True)
+            location_filter = gr.Dropdown(label="Store Location", choices=[], interactive=True)
+            payment_filter = gr.Dropdown(label="Payment Mode", choices=[], interactive=True)
+            date_filter = gr.DateTime(label="Date Range", interactive=True)
+
 
         # ===== KPI CARDS =====
         with gr.Row(elem_classes="center-wrapper"):
@@ -1295,7 +1358,24 @@ with gr.Blocks(
             with gr.Column(elem_classes="dashboard-card"):
                 kpi4 = gr.Markdown("### 🚀 Growth Score\n## —")
 
+            plot_kpi = gr.Plot()
+            plot_location = gr.Plot()
+            plot_quantity = gr.Plot()
+            plot_scatter = gr.Plot()
+            plot_cumulative = gr.Plot()
+
+
         gr.Markdown("---")
+        # insights_output = gr.Markdown()
+
+        # pdf_output = gr.File(label="Download PDF Report", visible=False)
+
+
+        # view_dashboard_btn = gr.Button(
+        #                 "📊 View Dashboard",
+        #                 visible=False,
+        #                 variant="primary"
+        #             )              
 
         # ===== CHARTS ROW 1 =====
         with gr.Row():
@@ -1319,8 +1399,6 @@ with gr.Blocks(
 
     # ==================== EVENT HANDLERS ====================
 
-    
-
     def update_visibility(step):
         return [
             gr.update(visible=(step == 0)),
@@ -1329,7 +1407,8 @@ with gr.Blocks(
             gr.update(visible=(step == 3)),
             gr.update(visible=(step == 4)),
             gr.update(visible=(step == 5)),
-            gr.update(visible=(step == 6))
+            gr.update(visible=(step == 6)),
+           
           
         ]
 
@@ -1469,82 +1548,140 @@ with gr.Blocks(
             return (f"❌ Error saving profile: {str(e)}", current_data, gr.update(visible=False), gr.update(visible=True)) # Hide proceed button, show submit button
 
     def analyze_data(user_data, consent, file):
-        # Clear previous messages/outputs before analysis
+
+    # Reset outputs
         initial_output_updates = [
-            gr.update(value="", visible=False), # insights_output
+            gr.update(value="", visible=False),   # insights_output
             gr.update(value=None, visible=False), # pdf_output
-            gr.update(visible=False), # view_dashboard_btn
-            gr.update(value="### 💰 Total Sales\n—"), # kpi1
-            gr.update(value="### 📈 Total Profit\n—"), # kpi2
-            gr.update(value="### 🧠 Health Score\n—"), # kpi3
-            gr.update(value="### 🚀 Growth Score\n—"), # kpi4
-            None, None, None, None, # charts
-            gr.update(value="", visible=False) # upload_message
+            gr.update(visible=False),             # view_dashboard_btn
+            gr.update(value="### 💰 Total Sales\n—"),
+            gr.update(value="### 📈 Total Profit\n—"),
+            gr.update(value="### 🧠 Health Score\n—"),
+            gr.update(value="### 🚀 Growth Score\n—"),
+            None, None, None, None,
+            gr.update(value="", visible=False)
         ]
 
+        # Validate consent
         if not consent:
-            return (f"⚠️ Please provide consent to analyze data", gr.update(value="", visible=True), *initial_output_updates[1:])
+            return (
+                "⚠️ Please provide consent to analyze data",
+                gr.update(value=None, visible=False),
+                *initial_output_updates[2:]
+            )
+
+        # Validate file
         if file is None:
-            return (f"⚠️ Please upload an Excel or CSV file", gr.update(value="", visible=True), *initial_output_updates[1:])
+            return (
+                "⚠️ Please upload a file",
+                gr.update(value=None, visible=False),
+                *initial_output_updates[2:]
+            )
 
         try:
-            # Read the file
-            if file.name.endswith('.xlsx'):
+            # Read file
+            if file.name.endswith(".xlsx"):
                 df = pd.read_excel(file.name)
-            elif file.name.endswith('.csv'):
+            elif file.name.endswith(".csv"):
                 df = pd.read_csv(file.name)
             else:
-                return (f"❌ Unsupported file format. Please upload .xlsx or .csv", gr.update(value="", visible=True), *initial_output_updates[1:])
+                return (
+                    "❌ Unsupported file format",
+                    gr.update(value=None, visible=False),
+                    *initial_output_updates[2:]
+                )
+
+            print("DEBUG: Columns:", df.columns.tolist())
+
+            # Required columns mapping (your dataset uses different names)
+            df = df.rename(columns={
+                "Product_Name": "SKU_Name",
+                "Gross_Sales": "Monthly_Sales_INR",
+                "Profit_Margin_%": "Avg_Margin_Percent",
+                "Quantity_Sold": "Monthly_Demand_Units",
+                "Outstanding_Amount": "Outstanding_Loan_INR"
+            })
 
             # Validate required columns
-            required_cols = ['Monthly_Sales_INR', 'SKU_Name']
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
-                return (f"❌ Missing required columns: {', '.join(missing_cols)}", gr.update(value="", visible=True), *initial_output_updates[1:])
+            required_cols = ["SKU_Name", "Monthly_Sales_INR"]
 
-            print(f"Processing file with {len(df)} rows and {len(df.columns)} columns")
+            missing = [col for col in required_cols if col not in df.columns]
+
+            if missing:
+                return (
+                    f"❌ Missing columns: {missing}",
+                    gr.update(value=None, visible=False),
+                    *initial_output_updates[2:]
+                )
+
+            print("File validation successful")
 
             # Generate insights
             insights, error_msg, forecast_data = generate_insights(user_data, df)
+
             if error_msg:
-                return (f"❌ {error_msg}", gr.update(value="", visible=True), *initial_output_updates[1:])
+                return (
+                    error_msg,
+                    gr.update(value=None, visible=False),
+                    *initial_output_updates[2:]
+                )
 
-            print("Insights generated successfully")
+            print("Insights generated")
 
-            # Generate dashboard data
+            # Generate dashboard
             kpi1, kpi2, kpi3, kpi4, fig1, fig2, fig3, fig4, dash_error = generate_dashboard_data(user_data, df)
 
-            if dash_error:
-                print(f"Dashboard error: {dash_error}")
-            else:
-                print("Dashboard generated successfully")
+            print("Dashboard generated")
 
-            # Generate PDF report
+            # Generate PDF
             pdf_path, pdf_error = generate_pdf_report(user_data, df, [fig1, fig2, fig3, fig4])
 
-            if pdf_error:
-                print(f"PDF generation warning: {pdf_error}")
-            else:
-                print(f"PDF generated at: {pdf_path}")
+            if pdf_error or not pdf_path:
+                print("PDF Error:", pdf_error)
+                return (
+                    f"❌ PDF generation failed: {pdf_error}",
+                    gr.update(value=None, visible=False),
+                    *initial_output_updates[2:]
+                )
 
+            print("PDF generated successfully:", pdf_path)
+
+            # FINAL SUCCESS RETURN
             return (
-                insights if insights else "✅ Analysis completed successfully",
-                pdf_path,
+
+                insights,
+
+                gr.update(value=pdf_path, visible=True),
+
                 gr.update(visible=True),
-                kpi1, kpi2, kpi3, kpi4,
-                fig1, fig2, fig3, fig4,
-                gr.update(value="", visible=False) # Clear upload_message
+
+                kpi1,
+                kpi2,
+                kpi3,
+                kpi4,
+
+                fig1,
+                fig2,
+                fig3,
+                fig4,
+
+                gr.update(value="", visible=False)
             )
 
         except Exception as e:
+
             import traceback
-            error_trace = traceback.format_exc()
-            print(f"Analysis error:\n{error_trace}")
+            traceback.print_exc()
+
             return (
-                f"❌ Analysis failed: {str(e)}\n\nPlease check your file format and try again.",
-                gr.update(value="", visible=True),
-                *initial_output_updates[1:]
+
+                f"❌ Analysis failed: {str(e)}",
+
+                gr.update(value=None, visible=False),
+
+                *initial_output_updates[2:]
             )
+
 
     # Helper function to display upload message
     def handle_file_upload_change(user_data, file):
@@ -1598,6 +1735,31 @@ with gr.Blocks(
 
     view_dashboard_btn.click(lambda: (6, *update_visibility(6)), [], [step_state, step0_col, step1_col, step2_col, step3_col, step4_col, step5_col, step6_col])
     back6_btn.click(lambda: (5, *update_visibility(5)), [], [step_state, step0_col, step1_col, step2_col, step3_col, step4_col, step5_col, step6_col])
+    # ==================== FILTER EVENTS ====================
+
+    product_filter.change(
+        update_plotly_dashboard,
+        inputs=[product_filter, location_filter, payment_filter, date_filter],
+        outputs=[plot_kpi, plot_location, plot_quantity, plot_scatter, plot_cumulative]
+    )
+
+    location_filter.change(
+        update_plotly_dashboard,
+        inputs=[product_filter, location_filter, payment_filter, date_filter],
+        outputs=[plot_kpi, plot_location, plot_quantity, plot_scatter, plot_cumulative]
+    )
+
+    payment_filter.change(
+        update_plotly_dashboard,
+        inputs=[product_filter, location_filter, payment_filter, date_filter],
+        outputs=[plot_kpi, plot_location, plot_quantity, plot_scatter, plot_cumulative]
+    )
+
+    date_filter.change(
+        update_plotly_dashboard,
+        inputs=[product_filter, location_filter, payment_filter, date_filter],
+        outputs=[plot_kpi, plot_location, plot_quantity, plot_scatter, plot_cumulative]
+    )
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -1608,7 +1770,7 @@ if __name__ == "__main__":
     print("✅ AI Insights - WORKING")
     print("✅ Dashboard with 4 Charts - WORKING")
     print("=" * 60)
-    demo.launch(allowed_paths=[os.getcwd()])
+    demo.launch()
 
 
 
