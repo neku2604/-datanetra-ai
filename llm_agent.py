@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 # OPENROUTER API KEY
 # ==============================
 
-OPENROUTER_API_KEY = "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"
+OPENROUTER_API_KEY = "YOUR_API_KEY"
 
 
 # ==============================
